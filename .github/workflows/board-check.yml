@@ -1,0 +1,13 @@
+name: Board check
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: List the board using PROJECT_TOKEN
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: bash .claude/skills/board-ops/board.sh list
