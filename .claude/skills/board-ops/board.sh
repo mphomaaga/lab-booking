@@ -7,6 +7,9 @@
 #   bash .claude/skills/board-ops/board.sh add  <issue>
 #   bash .claude/skills/board-ops/board.sh move <issue> "<Status>"
 #   bash .claude/skills/board-ops/board.sh set  <issue> <Field> <Option>
+#   bash .claude/skills/board-ops/board.sh block <issue> <blocker>   (issue is blocked by blocker)
+#   bash .claude/skills/board-ops/board.sh blockers <issue>          (list what blocks an issue)
+#   bash .claude/skills/board-ops/board.sh child <parent> <issue>    (make issue a sub-issue of parent)
 #
 # Locally it uses your gh login. In GitHub Actions, set GH_TOKEN to the PROJECT_TOKEN secret.
 
@@ -67,6 +70,11 @@ ensure_item() {
   echo "$id"
 }
 
+# The REST id (not the number) of an issue, needed by the dependency and sub-issue APIs.
+issue_db_id() {
+  gh api "repos/$REPO/issues/$1" --jq '.id'
+}
+
 set_option() {
   local issue="$1" field="$2" option="$3" fid oid iid pid
   check_issue "$issue"; check_name "$field"; check_name "$option"
@@ -117,8 +125,33 @@ case "$cmd" in
     [[ "$3" != "Status" ]] || die "use 'move' to change Status"
     set_option "$2" "$3" "$4"
     ;;
+  block)
+    [[ $# -eq 3 ]] || die "usage: block <issue> <blocker>"
+    check_issue "$2"; check_issue "$3"
+    [[ "$2" != "$3" ]] || die "an issue can't block itself"
+    bid="$(issue_db_id "$3")"
+    [[ -n "$bid" ]] || die "issue #$3 not found"
+    gh api -X POST "repos/$REPO/issues/$2/dependencies/blocked_by" -F issue_id="$bid" > /dev/null
+    sleep 1  # GitHub rate-limits rapid dependency creation
+    echo "#$2 is blocked by #$3"
+    ;;
+  blockers)
+    [[ $# -eq 2 ]] || die "usage: blockers <issue>"
+    check_issue "$2"
+    gh api "repos/$REPO/issues/$2/dependencies/blocked_by" \
+      --jq '.[] | "#\(.number)\t\(.state)\t\(.title)"'
+    ;;
+  child)
+    [[ $# -eq 3 ]] || die "usage: child <parent> <issue>"
+    check_issue "$2"; check_issue "$3"
+    sid="$(issue_db_id "$3")"
+    [[ -n "$sid" ]] || die "issue #$3 not found"
+    gh api -X POST "repos/$REPO/issues/$2/sub_issues" -F sub_issue_id="$sid" > /dev/null
+    sleep 1
+    echo "#$3 is now a sub-issue of #$2"
+    ;;
   *)
-    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
     [[ -z "$cmd" || "$cmd" == "help" ]] || exit 1
     ;;
 esac
