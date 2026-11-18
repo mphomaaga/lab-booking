@@ -68,4 +68,4 @@ Nothing else is allowed. If you can't tag an item, it doesn't go in the spec. It
 - **Contradictions are always blocking.** Quote both versions and ask which is right. Never pick one.
 - **Vague words aren't requirements.** "Soon", "easy", "fast" and "not fancy" either become a measurable rule (via a question) or are left out.
 - **A feature needing something the house doesn't have** (email, SMS, payments): blocking question, and suggest moving it to Out of scope.
-- **Status is Complete only with zero blocking questions.** Non-blocking questions can stay. Their suggested answers count as accepted when a human moves the card to Ready.
+- **Status is Complete only when there are no open questions at all.** Non-blocking questions still need a human reply, even just 'accept the suggestions', before the spec is Complete.

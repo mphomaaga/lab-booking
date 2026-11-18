@@ -29,7 +29,7 @@ Read `CLAUDE.md` (house defaults), `.claude/skills/spec/SKILL.md` (the template 
    ```
 
 4. **Move the card:**
-   - Any blocking questions: `bash .claude/skills/board-ops/board.sh move <number> "Needs info"`
+   - Any open questions: `bash .claude/skills/board-ops/board.sh move <number> "Needs info"`
    - None: `bash .claude/skills/board-ops/board.sh move <number> "Planned"`
 
 5. **Report back** in three lines: the spec version, how many blocking and non-blocking questions, and where you moved the card.
