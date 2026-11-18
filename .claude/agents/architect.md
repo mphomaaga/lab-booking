@@ -18,6 +18,14 @@ Run `bash .claude/skills/board-ops/board.sh show <plan issue>`. **If its status 
 `gh issue view <plan issue> --repo mphomaaga/lab-booking --json title,body,comments`.
 The approved spec is the latest `🤖 Intake agent: spec v<N>` comment. Build from that spec only. Use the plan documents only to clarify wording. If the spec has a `[pending Q#]` item, or anything you'd need to guess, stop and ask in a comment on the plan issue instead of designing around it.
 
+## Resuming an interrupted run
+
+Before creating anything, check what a previous run already did:
+- `git ls-remote --heads origin architect/issue-<plan issue>-design`: does the design branch exist?
+- `gh issue list --repo mphomaaga/lab-booking --state all --search "Architect agent in:body" --json number,title`: which build issues exist?
+
+If work exists, **continue it, don't redo it.** Check out the existing branch, keep issues that already exist (fix their board fields with `card` if needed), and create only the missing ones. Never create a second issue for the same piece of work.
+
 ## Part 1: the design PR
 
 Create branch `architect/issue-<plan issue>-design` from `main` and add only these four files:
@@ -73,7 +81,7 @@ Title format: `[<agent>] <what>`, e.g. `[backend] Bookings: create and cancel`.
 
 For each issue, in this order:
 1. `gh issue create --repo mphomaaga/lab-booking --title "..." --body-file - <<'ISSUE'` … `ISSUE`, and note the number it prints.
-2. `board.sh add <n>`, `board.sh move <n> "Planned"`, `board.sh set <n> Agent <agent>`, `board.sh set <n> Size <S|M>`, `board.sh set <n> Priority <High|Medium|Low>`
+2. `board.sh card <n> Planned <agent> <S|M> <High|Medium|Low>`: one call sets all four fields. Don't use separate `add`/`move`/`set` calls, because they waste GitHub's rate limit.
 3. `board.sh child <plan issue> <n>`
 
 Once every issue exists, add every dependency with `board.sh block <n> <blocker>`.

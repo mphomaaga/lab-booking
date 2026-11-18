@@ -14,11 +14,13 @@ bash .claude/skills/board-ops/board.sh list                      # every card: n
 bash .claude/skills/board-ops/board.sh list "Ready"              # only cards in one column
 bash .claude/skills/board-ops/board.sh show 12                   # one card's fields
 bash .claude/skills/board-ops/board.sh add 12                    # put issue #12 on the board
+bash .claude/skills/board-ops/board.sh card 12 Planned backend M High   # Status, Agent, Size, Priority in one call
 bash .claude/skills/board-ops/board.sh move 12 "In progress"     # change Status
 bash .claude/skills/board-ops/board.sh set 12 Agent backend      # set Agent, Size or Priority
 bash .claude/skills/board-ops/board.sh block 12 9                # #12 is blocked by #9
 bash .claude/skills/board-ops/board.sh blockers 12               # what blocks #12, and whether it's closed
 bash .claude/skills/board-ops/board.sh child 6 12                # #12 becomes a sub-issue of #6
+bash .claude/skills/board-ops/board.sh limits                    # how much GitHub API budget is left
 ```
 
 Names are case-sensitive. If you use a wrong one, the script prints the valid options. `block` and `child` are for the architect only.
@@ -46,6 +48,14 @@ Inbox → Needs info → Planned → Ready → In progress → In review → Don
 - **Agent:** db, backend, frontend, infra, qa
 - **Size:** S, M, L
 - **Priority:** High, Medium, Low
+
+## GitHub's rate limit
+
+GitHub allows a limited number of API calls per hour. Save them:
+- To set up a new card, use one `card` command, not `add` + `move` + three `set`s.
+- Don't run `list` or `show` in a loop. Run `list` once and read the output.
+
+If the script says **"GitHub rate limit hit"**, stop and report the reset time it prints. Don't retry.
 
 ## When something fails
 
