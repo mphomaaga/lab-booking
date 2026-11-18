@@ -1,124 +1,52 @@
-#!/usr/bin/env bash
-# board-ops: move cards on the Agent Pipeline board without touching GitHub node IDs.
-#
-# Usage:
-#   bash .claude/skills/board-ops/board.sh list [Status]
-#   bash .claude/skills/board-ops/board.sh show <issue>
-#   bash .claude/skills/board-ops/board.sh add  <issue>
-#   bash .claude/skills/board-ops/board.sh move <issue> "<Status>"
-#   bash .claude/skills/board-ops/board.sh set  <issue> <Field> <Option>
-#
-# Locally it uses your gh login. In GitHub Actions, set GH_TOKEN to the PROJECT_TOKEN secret.
+---
+name: board-ops
+description: Read and update the Agent Pipeline project board (GitHub Projects board 2). Use whenever you need to see what work exists, pick up a card, change a card's Status, set its Agent, Size or Priority field, or link issue dependencies.
+---
 
-set -euo pipefail
+# board-ops
 
-OWNER="${BOARD_OWNER:-mphomaaga}"
-PROJECT="${BOARD_PROJECT:-2}"
-REPO="${BOARD_REPO:-mphomaaga/lab-booking}"
+The project board is the shared to-do list for every agent. Always change it with this script. Never call `gh project` directly: it needs internal IDs that are easy to get wrong.
 
-# Columns only a human (or a GitHub workflow) may move a card into.
-HUMAN_ONLY="Ready Done"
+Run every command from the repo root:
 
-die() { echo "board: $*" >&2; exit 1; }
+```
+bash .claude/skills/board-ops/board.sh list                      # every card: number, status, agent, title
+bash .claude/skills/board-ops/board.sh list "Ready"              # only cards in one column
+bash .claude/skills/board-ops/board.sh show 12                   # one card's fields
+bash .claude/skills/board-ops/board.sh add 12                    # put issue #12 on the board
+bash .claude/skills/board-ops/board.sh move 12 "In progress"     # change Status
+bash .claude/skills/board-ops/board.sh set 12 Agent backend      # set Agent, Size or Priority
+bash .claude/skills/board-ops/board.sh block 12 9                # #12 is blocked by #9
+bash .claude/skills/board-ops/board.sh blockers 12               # what blocks #12, and whether it's closed
+bash .claude/skills/board-ops/board.sh child 6 12                # #12 becomes a sub-issue of #6
+```
 
-# Names go into jq filters, so only allow plain characters.
-check_name() {
-  [[ "$1" =~ ^[A-Za-z0-9\ _-]+$ ]] || die "invalid name '$1' (letters, digits, spaces, - and _ only)"
-}
+Names are case-sensitive. If you use a wrong one, the script prints the valid options. `block` and `child` are for the architect only.
 
-check_issue() {
-  [[ "$1" =~ ^[0-9]+$ ]] || die "issue must be a number, got '$1'"
-}
+## Columns, in order
 
-project_id() {
-  gh project view "$PROJECT" --owner "$OWNER" --format json --jq '.id'
-}
+Inbox → Needs info → Planned → Ready → In progress → In review → Done
 
-# Prints the board item ID for an issue in $REPO, or nothing if it isn't on the board.
-item_id() {
-  gh project item-list "$PROJECT" --owner "$OWNER" --limit 1000 --format json \
-    --jq ".items[] | select(.content.number == $1 and .content.repository == \"$REPO\") | .id"
-}
+## Which columns you may move a card into
 
-field_id() {
-  gh project field-list "$PROJECT" --owner "$OWNER" --format json \
-    --jq ".fields[] | select(.name == \"$1\") | .id"
-}
+| Agent | May move cards to |
+|---|---|
+| intake | Needs info, Planned |
+| architect | Planned |
+| db, backend, frontend, infra | In progress, In review |
+| qa, reviewer | none (comment on the PR instead) |
 
-option_id() {
-  gh project field-list "$PROJECT" --owner "$OWNER" --format json \
-    --jq ".fields[] | select(.name == \"$1\") | .options[]? | select(.name == \"$2\") | .id"
-}
+- **Ready** means a human approved the card. Only a human moves cards there. The script refuses.
+- **Done** happens automatically when the issue closes or its PR merges. Never move a card to Done yourself.
+- Only start work on a card that is in **Ready** and whose blockers are all `closed` (check with `blockers`).
+- When you start a card, move it to **In progress**. When your PR is open, move it to **In review**.
 
-option_names() {
-  gh project field-list "$PROJECT" --owner "$OWNER" --format json \
-    --jq ".fields[] | select(.name == \"$1\") | [.options[]?.name] | join(\", \")"
-}
+## Fields
 
-# Adds the issue to the board if it isn't there yet; prints its item ID.
-ensure_item() {
-  local id
-  id="$(item_id "$1")"
-  if [[ -z "$id" ]]; then
-    id="$(gh project item-add "$PROJECT" --owner "$OWNER" \
-      --url "https://github.com/$REPO/issues/$1" --format json --jq '.id')"
-  fi
-  [[ -n "$id" ]] || die "could not find or add issue #$1"
-  echo "$id"
-}
+- **Agent:** db, backend, frontend, infra, qa
+- **Size:** S, M, L
+- **Priority:** High, Medium, Low
 
-set_option() {
-  local issue="$1" field="$2" option="$3" fid oid iid pid
-  check_issue "$issue"; check_name "$field"; check_name "$option"
-  fid="$(field_id "$field")"
-  [[ -n "$fid" ]] || die "no field called '$field' on board $PROJECT"
-  oid="$(option_id "$field" "$option")"
-  [[ -n "$oid" ]] || die "'$option' is not an option of $field. Valid: $(option_names "$field")"
-  iid="$(ensure_item "$issue")"
-  pid="$(project_id)"
-  gh project item-edit --id "$iid" --project-id "$pid" \
-    --field-id "$fid" --single-select-option-id "$oid" > /dev/null
-  echo "#$issue: $field -> $option"
-}
+## When something fails
 
-cmd="${1:-}"
-case "$cmd" in
-  list)
-    status="${2:-}"
-    [[ -z "$status" ]] || check_name "$status"
-    gh project item-list "$PROJECT" --owner "$OWNER" --limit 1000 --format json \
-      --jq ".items[] | select(\"$status\" == \"\" or .status == \"$status\")
-            | \"#\(.content.number // \"-\")\t\(.status // \"-\")\t\(.agent // \"-\")\t\(.title)\""
-    ;;
-  show)
-    [[ $# -eq 2 ]] || die "usage: show <issue>"
-    check_issue "$2"
-    gh project item-list "$PROJECT" --owner "$OWNER" --limit 1000 --format json \
-      --jq ".items[] | select(.content.number == $2 and .content.repository == \"$REPO\")
-            | {issue: .content.number, title, status, agent, size, priority}"
-    ;;
-  add)
-    [[ $# -eq 2 ]] || die "usage: add <issue>"
-    check_issue "$2"
-    ensure_item "$2" > /dev/null
-    echo "#$2 is on the board"
-    ;;
-  move)
-    [[ $# -eq 3 ]] || die "usage: move <issue> \"<Status>\""
-    for col in $HUMAN_ONLY; do
-      if [[ "$3" == "$col" && "${BOARD_HUMAN:-}" != "1" ]]; then
-        die "only a human moves cards to $col (merged PRs move cards to Done automatically)"
-      fi
-    done
-    set_option "$2" "Status" "$3"
-    ;;
-  set)
-    [[ $# -eq 4 ]] || die "usage: set <issue> <Field> <Option>"
-    [[ "$3" != "Status" ]] || die "use 'move' to change Status"
-    set_option "$2" "$3" "$4"
-    ;;
-  *)
-    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
-    [[ -z "$cmd" || "$cmd" == "help" ]] || exit 1
-    ;;
-esac
+If the script prints an error, stop and report the exact message. Don't work around it with raw `gh` commands.
