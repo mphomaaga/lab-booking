@@ -15,7 +15,7 @@ Read `CLAUDE.md` (house defaults), `.claude/skills/spec/SKILL.md` (the template 
 ## Steps
 
 1. **Read the issue and every comment on it:**
-   `gh issue view <number> --repo mphomaaga/lab-booking --comments`
+   `gh issue view <number> --repo mphomaaga/lab-booking --json title,body,labels,comments`
    - The plan is the issue body. Some plans arrive as several documents in one issue. Treat them as one plan, and compare them for contradictions.
    - If you've posted a spec before, the latest `🤖 Intake agent: spec v<N>` comment is your previous version. Comments from humans after it are answers. Write version N+1.
 

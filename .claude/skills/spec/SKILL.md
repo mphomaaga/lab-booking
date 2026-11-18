@@ -9,11 +9,12 @@ Every plan, whether it's a client email, a PM document or a developer checklist,
 
 ## Source tags
 
-Tag every item in sections 3–10 with where it came from:
+Tag every item in sections 3–10 with where it came from, or with the open question it waits on:
 
 - `[plan]`: stated in the plan
 - `[answer]`: stated by a human in a reply on the issue
 - `[default]`: taken from the house defaults in `CLAUDE.md`
+- `[pending Q#]`: depends on an open question that hasn't been answered yet, for example `[pending Q1]`. `Q#` must be a question listed in Open questions. Replace the tag with `[answer]` once a human answers
 
 Nothing else is allowed. If you can't tag an item, it doesn't go in the spec. It goes in Open questions.
 
