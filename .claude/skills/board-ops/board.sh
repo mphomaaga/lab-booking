@@ -93,12 +93,39 @@ else:
 ' "$@"
 }
 
-# Adds the issue to the board if needed and prints its item ID.
-# Adding an issue that's already on the board just returns its existing item.
+# Prints the board item ID for an issue, or nothing if it isn't on the board.
+# One cheap query on the issue itself, instead of downloading the whole board.
+find_item() {
+  ghx api graphql \
+    -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){projectItems(first:50){nodes{id project{number url}}}}}}' \
+    -F o="${REPO%/*}" -F r="${REPO#*/}" -F n="$1" \
+    --jq ".data.repository.issue.projectItems.nodes[]
+          | select(.project.number == $PROJECT and (.project.url | contains(\"/$OWNER/projects/\")))
+          | .id"
+}
+
+# Prints the issue's board item ID, adding it to the board first if needed.
+# The board's auto-add workflow can add a new issue at any moment, so if adding
+# says "already exists", look it up again instead of failing.
 item_id() {
-  local id
-  id="$(ghx project item-add "$PROJECT" --owner "$OWNER" \
-    --url "https://github.com/$REPO/issues/$1" --format json --jq '.id')"
+  local id errf
+  id="$(find_item "$1")"
+  if [[ -z "$id" ]]; then
+    errf="$(mktemp)"
+    if id="$(gh project item-add "$PROJECT" --owner "$OWNER" \
+        --url "https://github.com/$REPO/issues/$1" --format json --jq '.id' 2>"$errf")"; then
+      :
+    elif grep -qi "already exists" "$errf"; then
+      sleep 2
+      id="$(find_item "$1")"
+    elif grep -qi "rate limit" "$errf"; then
+      rm -f "$errf"
+      die "GitHub rate limit hit. $(limits_line). Stop and report this; don't retry."
+    else
+      cat "$errf" >&2; rm -f "$errf"; exit 1
+    fi
+    rm -f "$errf"
+  fi
   [[ -n "$id" ]] || die "could not find or add issue #$1"
   echo "$id"
 }
