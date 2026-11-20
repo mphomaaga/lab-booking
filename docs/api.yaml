@@ -1,0 +1,780 @@
+openapi: 3.1.0
+info:
+  title: Lab Booking API
+  version: 1.0.0
+  description: |
+    Contract for the campus lab booking pilot (spec: docs/spec.md, spec v3 of issue #6).
+    Backend and frontend both build to this file. If something here is wrong or missing,
+    raise it on the issue instead of changing behaviour silently.
+
+    ## Conventions
+
+    - **Instants** (`format: date-time`) are UTC, ISO 8601 with a `Z` suffix and whole
+      seconds, for example `2026-11-19T06:00:00Z`. The server never returns offsets other
+      than `Z`. The frontend converts them to Africa/Johannesburg for display (rule 5.16).
+    - **Dates** (`format: date`, `YYYY-MM-DD`) are calendar dates in Africa/Johannesburg
+      (rule 5.16). "Today" means today's date in Africa/Johannesburg.
+    - **Booking window** = today up to and including today + 6 days (rule 5.5).
+    - **Opening hours** are 08:00 to 18:00 Africa/Johannesburg, Monday to Friday, in ten
+      1-hour slots starting 08:00, 09:00, ..., 17:00 (rules 5.1, 5.2).
+    - **Auth**: every endpoint needs `Authorization: Bearer <access_token>` unless it says
+      `security: []`. Endpoints tagged `admin` also need the user to have `is_admin` (rule 5.13).
+      A missing, malformed or expired token, or a token for a user that no longer exists,
+      gives 401 `not_authenticated`.
+    - **Errors** all use the `Error` schema. `error.code` is stable and machine readable;
+      `error.message` is human readable English that the frontend may show as is.
+      Request validation failures (wrong types, missing fields, bad date format) give 422
+      `validation_error` with `details`.
+    - **Booking status** is derived: `cancelled` when `cancelled_at` is set, otherwise
+      `active` (spec section 6: no new field).
+servers:
+  - url: http://localhost:8000
+    description: Local backend (uvicorn or docker compose)
+security:
+  - bearerAuth: []
+tags:
+  - name: system
+  - name: auth
+  - name: labs
+  - name: bookings
+  - name: admin
+    description: Needs a logged-in user with `is_admin = true`. Others get 403 `admin_required`.
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      operationId: health
+      summary: Liveness check for Docker and CI
+      security: []
+      responses:
+        '200':
+          description: The API is up
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Log in with student number and password (US-1)
+      description: |
+        Student number is matched exactly as stored (no format check, spec US-1).
+        Admins log in the same way. The token lifetime is `JWT_EXPIRE_MINUTES`
+        (default 480 = 8 hours, rule 5.14). No refresh tokens; logging out is done by the
+        client discarding the token, so there is no logout endpoint.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Unknown student number or wrong password (same response for both)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: invalid_credentials, message: Student number or password is incorrect.}
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      summary: The logged-in user
+      description: Used by the frontend on page load to check a stored token and learn `is_admin`.
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+
+  /labs:
+    get:
+      tags: [labs]
+      operationId: listLabs
+      summary: Active labs, ordered by name (US-2)
+      description: Labs with `is_active = false` are left out (rule 5.12).
+      responses:
+        '200':
+          description: Active labs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Lab'
+              example:
+                - {id: 1, name: Lab A, seats: 30}
+                - {id: 2, name: Lab B, seats: 30}
+                - {id: 3, name: Lab C, seats: 30}
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+
+  /labs/{lab_id}/slots:
+    get:
+      tags: [labs]
+      operationId: getLabSlots
+      summary: Slots and free seat counts for one lab on one date (US-2)
+      description: |
+        Checks, in this order:
+        1. Lab doesn't exist or is inactive: 404 `lab_not_found` (rule 5.12).
+        2. `date` outside the booking window (before today or after today + 6): 422 `date_out_of_window` (rule 5.5).
+        3. Saturday or Sunday: 200, `day_status: weekend`, `slots: []` (rule 5.1).
+        4. Lab has a closure on `date`: 200, `day_status: closed`, `slots: []` (rule 5.10).
+        5. Otherwise 200, `day_status: open`, all ten slots ordered by `start_time`,
+           including ones that have started or are full (shown with `bookable: false`).
+
+        Slot rows are created on demand the first time an open date is requested, so
+        `slot.id` values returned here are stable and can be passed to `POST /bookings`.
+      parameters:
+        - $ref: '#/components/parameters/LabId'
+        - name: date
+          in: query
+          required: true
+          description: Calendar date in Africa/Johannesburg
+          schema:
+            type: string
+            format: date
+          example: '2026-11-19'
+      responses:
+        '200':
+          description: The day's slots
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaySlots'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '404':
+          description: Lab not found or inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: lab_not_found, message: Lab not found.}
+        '422':
+          description: "`date_out_of_window`, or `validation_error` for a missing or malformed date"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: date_out_of_window, message: You can only view today and the next 6 days.}
+
+  /bookings:
+    post:
+      tags: [bookings]
+      operationId: createBooking
+      summary: Book one seat in a slot for the current user (US-3)
+      description: |
+        Any logged-in user, admins included, can book (rule 5.13). The booking is for the
+        caller; there is no way to book for someone else.
+
+        Checks, in this order (the first failing check decides the response):
+        1. Slot doesn't exist, or its lab is inactive: 404 `slot_not_found` (rule 5.12).
+        2. Slot `start_time` <= now: 422 `slot_in_past` (rule 5.8: bookable only until its start time).
+        3. Slot's date is outside the booking window: 422 `outside_booking_window` (rule 5.5).
+        4. Lab has a closure on the slot's date: 409 `lab_closed` (rule 5.10).
+        5. Caller already has an active booking for this slot: 409 `already_booked` (rule 5.7).
+        6. Caller has an active booking in another lab's slot with the same `start_time`: 409 `overlapping_booking` (rule 5.7).
+        7. Caller already has 2 active bookings on the slot's date, any lab, whether or not they have started: 409 `daily_limit_reached` (rule 5.6).
+        8. Active bookings for the slot >= the lab's `seats`: 409 `slot_full` (rule 5.8).
+
+        Cancelled bookings never count towards 5 to 8. On success the slot's `free_seats`
+        drops by one immediately.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBookingRequest'
+      responses:
+        '201':
+          description: Booked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '404':
+          description: Slot not found (or its lab is inactive)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: slot_not_found, message: Slot not found.}
+        '409':
+          description: "`lab_closed`, `already_booked`, `overlapping_booking`, `daily_limit_reached` or `slot_full`"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: daily_limit_reached, message: You already have 2 bookings on this day.}
+        '422':
+          description: "`slot_in_past`, `outside_booking_window` or `validation_error`"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: slot_in_past, message: This slot has already started.}
+
+  /bookings/{booking_id}:
+    delete:
+      tags: [bookings]
+      operationId: cancelBooking
+      summary: Cancel one of your own bookings before it starts (US-5)
+      description: |
+        Sets `cancelled_at` to now; the row is kept. The seat is free immediately (rule 5.9).
+
+        Checks, in this order:
+        1. Booking doesn't exist: 404 `booking_not_found`.
+        2. Booking belongs to another user: 403 `not_your_booking`. This applies to admins too;
+           admins cancel other people's bookings only through a closure.
+        3. Already cancelled: 409 `booking_already_cancelled`.
+        4. Slot `start_time` <= now: 409 `booking_already_started`.
+      parameters:
+        - name: booking_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Cancelled; returns the booking with `status = cancelled`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          description: Not the caller's booking
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: not_your_booking, message: You can only cancel your own bookings.}
+        '404':
+          description: Booking not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: booking_not_found, message: Booking not found.}
+        '409':
+          description: "`booking_already_cancelled` or `booking_already_started`"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: booking_already_started, message: This booking has already started and can't be cancelled.}
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /me/bookings:
+    get:
+      tags: [bookings]
+      operationId: listMyBookings
+      summary: The caller's upcoming bookings, active and cancelled (US-4)
+      description: |
+        Every booking of the caller whose slot `end_time` > now, both active and cancelled,
+        ordered by slot `start_time`, then `created_at`. Bookings whose slot has ended are
+        not returned. Bookings in labs that are now inactive are still returned.
+      responses:
+        '200':
+          description: The caller's bookings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+
+  /admin/bookings:
+    get:
+      tags: [admin]
+      operationId: adminListBookings
+      summary: All bookings for one lab on one date, with who made them (US-6)
+      description: |
+        Returns active and cancelled bookings (rule: spec US-6) for slots of `lab_id` on
+        `date`, ordered by slot `start_time`, then `created_at`. Any date is allowed, past or
+        future; there is no window limit for admins.
+
+        Checks, in this order: 403 `admin_required` for non-admins; 404 `lab_not_found`
+        if the lab doesn't exist or is inactive (rule 5.12); 422 `validation_error`
+        for missing or malformed parameters.
+      parameters:
+        - name: lab_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: date
+          in: query
+          required: true
+          description: Calendar date in Africa/Johannesburg
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: The lab's bookings for the date
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminDayBookings'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/AdminRequired'
+        '404':
+          description: Lab not found or inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: lab_not_found, message: Lab not found.}
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /admin/labs/{lab_id}/closures:
+    post:
+      tags: [admin]
+      operationId: adminCreateClosure
+      summary: Close a lab for one date and cancel its bookings (US-7)
+      description: |
+        Creates a closure for (`lab_id`, `date`) and, in the same transaction, sets
+        `cancelled_at = now` on every **active** booking for that lab and date whose slot
+        `start_time` > now. Bookings that have started or finished are left alone (rule 5.10).
+        There is no undo and no reopen endpoint (spec section 9).
+
+        Any date that is today or later is allowed, including weekends and dates beyond the
+        booking window, with no upper limit. Public holidays are handled this way; there is
+        no holiday calendar (rule 5.11).
+
+        Checks, in this order: 403 `admin_required`; 404 `lab_not_found` (missing or
+        inactive lab); 422 `validation_error` (bad body); 422 `closure_date_in_past`
+        (date before today); 409 `closure_exists` (lab already closed on that date).
+      parameters:
+        - $ref: '#/components/parameters/LabId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateClosureRequest'
+      responses:
+        '201':
+          description: Lab closed for the date
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClosureCreated'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/AdminRequired'
+        '404':
+          description: Lab not found or inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: lab_not_found, message: Lab not found.}
+        '409':
+          description: The lab is already closed on that date
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: closure_exists, message: This lab is already closed on that date.}
+        '422':
+          description: "`closure_date_in_past` or `validation_error`"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: {code: closure_date_in_past, message: You can't close a lab for a date in the past.}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        HS256 JWT signed with `JWT_SECRET`. Claims: `sub` (user id as a string), `iat`, `exp`.
+        `is_admin` is NOT trusted from the token; the server reads it from the database on
+        every request.
+
+  parameters:
+    LabId:
+      name: lab_id
+      in: path
+      required: true
+      schema:
+        type: integer
+
+  responses:
+    NotAuthenticated:
+      description: Missing, malformed or expired token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: {code: not_authenticated, message: Please log in.}
+    AdminRequired:
+      description: The user is logged in but is not an admin
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: {code: admin_required, message: Admins only.}
+    ValidationError:
+      description: The request doesn't match this contract
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: validation_error
+              message: The request is not valid.
+              details:
+                - {loc: [body, student_number], msg: Field required}
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              $ref: '#/components/schemas/ErrorCode'
+            message:
+              type: string
+            details:
+              description: Only for `validation_error`
+              type: array
+              items:
+                type: object
+                required: [loc, msg]
+                properties:
+                  loc:
+                    type: array
+                    items:
+                      oneOf:
+                        - type: string
+                        - type: integer
+                  msg:
+                    type: string
+
+    ErrorCode:
+      description: |
+        Every error code the API can return, with its HTTP status:
+        401 `not_authenticated`, `invalid_credentials`;
+        403 `admin_required`, `not_your_booking`;
+        404 `lab_not_found`, `slot_not_found`, `booking_not_found`, `not_found` (unknown route);
+        409 `lab_closed`, `already_booked`, `overlapping_booking`, `daily_limit_reached`,
+        `slot_full`, `booking_already_cancelled`, `booking_already_started`, `closure_exists`;
+        422 `validation_error`, `date_out_of_window`, `slot_in_past`, `outside_booking_window`,
+        `closure_date_in_past`; 500 `internal_error`.
+      type: string
+      enum:
+        - not_authenticated
+        - invalid_credentials
+        - admin_required
+        - not_your_booking
+        - lab_not_found
+        - slot_not_found
+        - booking_not_found
+        - not_found
+        - lab_closed
+        - already_booked
+        - overlapping_booking
+        - daily_limit_reached
+        - slot_full
+        - booking_already_cancelled
+        - booking_already_started
+        - closure_exists
+        - validation_error
+        - date_out_of_window
+        - slot_in_past
+        - outside_booking_window
+        - closure_date_in_past
+        - internal_error
+
+    LoginRequest:
+      type: object
+      required: [student_number, password]
+      additionalProperties: false
+      properties:
+        student_number:
+          type: string
+          minLength: 1
+          maxLength: 32
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+
+    LoginResponse:
+      type: object
+      required: [access_token, token_type, expires_at, user]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          const: bearer
+        expires_at:
+          type: string
+          format: date-time
+          description: UTC instant the token stops working
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      required: [id, student_number, is_admin]
+      properties:
+        id:
+          type: integer
+        student_number:
+          type: string
+        is_admin:
+          type: boolean
+
+    UserRef:
+      type: object
+      required: [id, student_number]
+      properties:
+        id:
+          type: integer
+        student_number:
+          type: string
+
+    Lab:
+      type: object
+      required: [id, name, seats]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        seats:
+          type: integer
+          minimum: 1
+
+    LabRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+
+    DayStatus:
+      type: string
+      enum: [open, closed, weekend]
+      description: |
+        `weekend` for Saturday and Sunday (checked first), `closed` when the lab has a
+        closure on the date, otherwise `open`.
+
+    Slot:
+      type: object
+      required: [id, start_time, end_time, seats, free_seats, bookable]
+      properties:
+        id:
+          type: integer
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+          description: Always start_time + 1 hour
+        seats:
+          type: integer
+          description: The lab's seat count
+        free_seats:
+          type: integer
+          minimum: 0
+          description: seats minus active (not cancelled) bookings for this slot, never below 0
+        bookable:
+          type: boolean
+          description: |
+            true when start_time > now and free_seats > 0. Does not consider the caller's
+            own limits (daily limit, overlap); `POST /bookings` reports those.
+
+    DaySlots:
+      type: object
+      required: [lab, date, day_status, slots]
+      properties:
+        lab:
+          $ref: '#/components/schemas/Lab'
+        date:
+          type: string
+          format: date
+        day_status:
+          $ref: '#/components/schemas/DayStatus'
+        slots:
+          type: array
+          description: Ten slots ordered by start_time when day_status is open, otherwise empty
+          items:
+            $ref: '#/components/schemas/Slot'
+
+    SlotRef:
+      type: object
+      required: [id, start_time, end_time]
+      properties:
+        id:
+          type: integer
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+
+    BookingStatus:
+      type: string
+      enum: [active, cancelled]
+
+    CreateBookingRequest:
+      type: object
+      required: [slot_id]
+      additionalProperties: false
+      properties:
+        slot_id:
+          type: integer
+
+    Booking:
+      type: object
+      required: [id, status, created_at, cancelled_at, cancellable, lab, slot]
+      properties:
+        id:
+          type: integer
+        status:
+          $ref: '#/components/schemas/BookingStatus'
+        created_at:
+          type: string
+          format: date-time
+        cancelled_at:
+          type: [string, 'null']
+          format: date-time
+        cancellable:
+          type: boolean
+          description: true when status is active and slot start_time > now (spec US-5)
+        lab:
+          $ref: '#/components/schemas/LabRef'
+        slot:
+          $ref: '#/components/schemas/SlotRef'
+
+    AdminBooking:
+      type: object
+      required: [id, status, created_at, cancelled_at, slot, user]
+      properties:
+        id:
+          type: integer
+        status:
+          $ref: '#/components/schemas/BookingStatus'
+        created_at:
+          type: string
+          format: date-time
+        cancelled_at:
+          type: [string, 'null']
+          format: date-time
+        slot:
+          $ref: '#/components/schemas/SlotRef'
+        user:
+          $ref: '#/components/schemas/UserRef'
+
+    AdminDayBookings:
+      type: object
+      required: [lab, date, closed, bookings]
+      properties:
+        lab:
+          $ref: '#/components/schemas/Lab'
+        date:
+          type: string
+          format: date
+        closed:
+          type: boolean
+          description: true when the lab has a closure on this date
+        bookings:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminBooking'
+
+    CreateClosureRequest:
+      type: object
+      required: [date]
+      additionalProperties: false
+      properties:
+        date:
+          type: string
+          format: date
+          description: Calendar date in Africa/Johannesburg, today or later
+
+    ClosureCreated:
+      type: object
+      required: [id, lab_id, date, created_at, cancelled_booking_count]
+      properties:
+        id:
+          type: integer
+        lab_id:
+          type: integer
+        date:
+          type: string
+          format: date
+        created_at:
+          type: string
+          format: date-time
+        cancelled_booking_count:
+          type: integer
+          minimum: 0
+          description: How many active, not-yet-started bookings this closure cancelled
