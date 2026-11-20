@@ -5,6 +5,7 @@ upserted by student number. The whole CSV is validated before anything is writte
 """
 
 import csv
+import io
 import os
 import sys
 from dataclasses import dataclass
@@ -65,21 +66,28 @@ def get_accounts_csv_path() -> Path:
 def read_accounts(path: Path) -> list[AccountRow]:
     """Read and validate every row. Raises SeedError naming the CSV line on the first problem."""
     try:
-        handle = open(path, newline="", encoding="utf-8-sig")
+        raw = path.read_bytes()
     except OSError as exc:
         raise SeedError(f"cannot read accounts CSV {path}: {exc.strerror or exc}") from exc
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        # str(exc) quotes a byte of the file, so name only the line (counted in the raw bytes).
+        raise SeedError(f"line {raw.count(b'\n', 0, exc.start) + 1}: the file is not valid UTF-8") from exc
 
-    with handle:
+    with io.StringIO(text, newline="") as handle:
         reader = csv.reader(handle)
         try:
             header = next(reader)
         except StopIteration:
             raise SeedError("line 1: the CSV is empty, expected header row 'student_number,password,is_admin'")
-        except (csv.Error, UnicodeDecodeError) as exc:
+        except csv.Error as exc:
             raise SeedError(f"line {reader.line_num}: {exc}") from exc
         if header != CSV_HEADER:
+            # Never echo the row: a CSV saved without a header makes the first data row the "header".
             raise SeedError(
-                f"line 1: header must be exactly 'student_number,password,is_admin', got '{','.join(header)}'"
+                f"line 1: header must be exactly 'student_number,password,is_admin' "
+                f"(found {len(header)} column(s) that do not match)"
             )
 
         rows: list[AccountRow] = []
@@ -89,14 +97,14 @@ def read_accounts(path: Path) -> list[AccountRow]:
                 fields = next(reader)
             except StopIteration:
                 break
-            except (csv.Error, UnicodeDecodeError) as exc:
+            except csv.Error as exc:
                 raise SeedError(f"line {reader.line_num}: {exc}") from exc
             line = reader.line_num
             row = _validate_row(line, fields)
             if row.student_number in first_seen:
+                # Lines only, not the value: with student_number and password swapped it is a password.
                 raise SeedError(
-                    f"line {line}: duplicate student_number '{row.student_number}' "
-                    f"(first used on line {first_seen[row.student_number]})"
+                    f"line {line}: duplicate student_number (same as line {first_seen[row.student_number]})"
                 )
             first_seen[row.student_number] = line
             rows.append(row)
@@ -118,7 +126,8 @@ def _validate_row(line: int, fields: list[str]) -> AccountRow:
         raise SeedError(f"line {line}: password is longer than {PASSWORD_MAX_BYTES} bytes (the bcrypt limit)")
     flag = is_admin_raw.strip().lower()
     if flag not in ("true", "false"):
-        raise SeedError(f"line {line}: is_admin must be 'true' or 'false', got '{is_admin_raw}'")
+        # Never echo the cell: with password and is_admin swapped it holds the password.
+        raise SeedError(f"line {line}: is_admin must be 'true' or 'false' (case-insensitive)")
     return AccountRow(line, student_number, password, flag == "true")
 
 

@@ -319,3 +319,80 @@ def test_cli_over_long_password_exits_cleanly(tmp_path, db_url, db_engine, db_se
     assert "Traceback" not in proc.stderr
     assert "line 2" in proc.stderr
     assert db_session.scalars(select(User)).all() == []
+
+
+# --- error output never contains CSV content (passwords) ----------------------------------
+
+SENTINEL = "S3ntinel-PW-do-not-print"
+HEADER = "student_number,password,is_admin"
+
+# (id, whole file as bytes, text that must appear in the error). Each file puts SENTINEL in a
+# cell that the seed treats as something else, or in a row that is rejected for another reason.
+LEAK_CASES = [
+    # The two reproductions from the review: headerless file, and password/is_admin swapped.
+    ("headerless", f"20260001,{SENTINEL},false\n20260002,pw-two,false\n".encode(), "line 1"),
+    ("headerless-sentinel-first-cell", f"{SENTINEL},pw-one,false\n".encode(), "line 1"),
+    ("swapped-password-and-is_admin", f"{HEADER}\n20260001,true,{SENTINEL}\n".encode(), "line 2"),
+    ("swapped-on-a-later-row", f"{HEADER}\n1001,pw,false\n1002,pw2,true\n1003,true,{SENTINEL}\n".encode(), "line 4"),
+    ("is_admin-cell-is-the-password", f"{HEADER}\n1001,pw,{SENTINEL}\n".encode(), "line 2"),
+    # Header variants.
+    ("header-columns-reordered", f"password,student_number,is_admin,{SENTINEL}\n".encode(), "line 1"),
+    ("header-is-one-sentinel-cell", f"{SENTINEL}\n".encode(), "line 1"),
+    # Duplicates, with student_number and password swapped so the "student number" is a password.
+    ("duplicate-with-swapped-columns", f"{HEADER}\n{SENTINEL},1001,false\n{SENTINEL},1002,true\n".encode(), "line 3"),
+    # Other row errors with the sentinel somewhere in the row.
+    ("too-many-columns", f"{HEADER}\n1001,{SENTINEL},false,extra\n".encode(), "line 2"),
+    ("too-few-columns", f"{HEADER}\n1001,{SENTINEL}\n".encode(), "line 2"),
+    ("empty-student_number", f"{HEADER}\n,{SENTINEL},false\n".encode(), "line 2"),
+    ("empty-password-after-sentinel-row", f"{HEADER}\n1001,{SENTINEL},false\n1002,,false\n".encode(), "line 3"),
+    ("over-long-password", f"{HEADER}\n1001,{SENTINEL}{'x' * 80},false\n".encode(), "line 2"),
+    ("over-long-student_number", f"{HEADER}\n{SENTINEL}{'1' * 40},pw,false\n".encode(), "line 2"),
+    ("unterminated-quote", f'{HEADER}\n1001,"{SENTINEL},false\n'.encode(), "line"),
+    ("bad-utf8", f"{HEADER}\n1001,{SENTINEL}\xe9,false\n".encode("latin-1"), "line 2"),
+    ("bad-utf8-in-first-row", b"\xff\xfe" + SENTINEL.encode() + b",pw,false\n", "line 1"),
+]
+
+
+def write_bytes(tmp_path: Path, content: bytes) -> Path:
+    path = tmp_path / "accounts.csv"
+    path.write_bytes(content)
+    return path
+
+
+@pytest.mark.parametrize(("content", "expected"), [c[1:] for c in LEAK_CASES], ids=[c[0] for c in LEAK_CASES])
+def test_error_text_never_contains_csv_content(tmp_path, content, expected):
+    with pytest.raises(SeedError) as excinfo:
+        read_accounts(write_bytes(tmp_path, content))
+    message = str(excinfo.value)
+    assert SENTINEL not in message
+    assert expected in message  # still tells the operator where to look
+
+
+@pytest.mark.parametrize(("content", "expected"), [c[1:] for c in LEAK_CASES], ids=[c[0] for c in LEAK_CASES])
+def test_cli_stderr_and_stdout_never_contain_csv_content(tmp_path, db_url, db_engine, content, expected):
+    proc = run_cli(db_url, write_bytes(tmp_path, content))
+    assert proc.returncode != 0
+    assert SENTINEL not in proc.stderr
+    assert SENTINEL not in proc.stdout
+    assert "Traceback" not in proc.stderr
+    assert expected in proc.stderr
+
+
+def test_header_and_is_admin_messages_still_say_what_was_expected(tmp_path):
+    with pytest.raises(SeedError) as header_error:
+        read_accounts(write_bytes(tmp_path, f"20260001,{SENTINEL},false\n".encode()))
+    assert "student_number,password,is_admin" in str(header_error.value)
+
+    with pytest.raises(SeedError) as flag_error:
+        read_accounts(write_bytes(tmp_path, f"{HEADER}\n20260001,true,{SENTINEL}\n".encode()))
+    assert "line 2" in str(flag_error.value)
+    assert "is_admin" in str(flag_error.value)
+    assert "'true' or 'false'" in str(flag_error.value)
+
+
+def test_duplicate_error_names_both_lines(tmp_path):
+    with pytest.raises(SeedError) as excinfo:
+        read_accounts(write_csv(tmp_path, "1001,pw,false\n1002,pw,false\n1001,pw2,true\n"))
+    message = str(excinfo.value)
+    assert "line 4" in message
+    assert "line 2" in message
