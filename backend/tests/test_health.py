@@ -1,6 +1,10 @@
-from fastapi.testclient import TestClient
+import os
 
-from app.main import app
+os.environ.setdefault("JWT_SECRET", "test-secret")
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.main import app  # noqa: E402
 
 
 def test_health() -> None:
