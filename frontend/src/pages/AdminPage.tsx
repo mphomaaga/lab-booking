@@ -23,6 +23,18 @@ interface ClosureResult {
   cancelledCount: number;
 }
 
+/**
+ * Everything the close dialog describes and everything the close request uses, captured once
+ * when the dialog opens. The dialog text, the request and the reload all read from this and
+ * never from live state, so a lab or date change can't make them disagree.
+ */
+interface CloseSnapshot {
+  labId: number;
+  labName: string;
+  date: string;
+  affected: number;
+}
+
 function resultText({ labName, date, cancelledCount }: ClosureResult): string {
   const closed = `${labName} is now closed on ${formatDate(date)}.`;
   if (cancelledCount === 0) return `${closed} No bookings needed cancelling.`;
@@ -40,8 +52,10 @@ export function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [confirmAffected, setConfirmAffected] = useState(0);
+  // Non-null while the close dialog is open. Set only by openConfirm; cleared on any lab or
+  // date change, on cancel and when the request finishes.
+  const [closeTarget, setCloseTarget] = useState<CloseSnapshot | null>(null);
+  const [preparing, setPreparing] = useState(false); // refetching the day before the dialog opens
   const [closing, setClosing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [result, setResult] = useState<ClosureResult | null>(null);
@@ -51,8 +65,14 @@ export function AdminPage() {
 
   const validDate = DATE_PATTERN.test(date);
 
+  // The selection as currently shown, for checks made after an await.
   const labIdRef = useRef<number | null>(null);
   labIdRef.current = labId;
+  const dateRef = useRef(date);
+  dateRef.current = date;
+  // Bumped on every lab or date change and every dialog open, so a slow day refetch that
+  // belongs to an older selection can't open the dialog.
+  const selectionVersion = useRef(0);
 
   /** Reloads the lab list. Returns the id of the lab that is selected afterwards. */
   const refreshLabs = useCallback(async (): Promise<number | null> => {
@@ -64,6 +84,12 @@ export function AdminPage() {
       if (current !== null && list.some((lab) => lab.id === current)) return current;
       // The lab is gone (or none was selected yet): fall back to the first one.
       const next = list[0]?.id ?? null;
+      if (next !== current) {
+        // The selection is changing under us: any open or pending close dialog is stale.
+        selectionVersion.current++;
+        setCloseTarget(null);
+        setPreparing(false);
+      }
       setLabId(next);
       if (current !== null) {
         setActionError((prev) => prev ?? "That lab is no longer available. Showing another lab.");
@@ -103,6 +129,9 @@ export function AdminPage() {
 
   // A new lab or date: drop what was on screen and load the new list.
   useEffect(() => {
+    // Whatever caused this change (picker, lab-gone switch), a dialog for the old selection
+    // must not survive it.
+    setCloseTarget(null);
     if (labId === null || !validDate) {
       requestId.current++; // ignore any request still in flight
       setData(null);
@@ -115,55 +144,100 @@ export function AdminPage() {
 
   const today = todayLocal();
   const canClose = data !== null && !data.closed && data.date >= today;
-  const selectedLab = labs?.find((lab) => lab.id === labId) ?? null;
 
-  const openConfirm = () => {
-    if (!data) return;
-    const now = Date.now();
-    setConfirmAffected(
-      data.bookings.filter((b) => b.status === "active" && new Date(b.slot.start_time).getTime() > now)
-        .length,
-    );
+  /**
+   * Refetches the day, then opens the dialog with a snapshot taken from that fresh list, so
+   * the booking count is current rather than whatever was loaded earlier. If the selection
+   * changes while the refetch is in flight the result is discarded and no dialog opens.
+   */
+  const openConfirm = async () => {
+    if (labId === null || !data || preparing || closing) return;
+    const forLab = labId;
+    const forDate = data.date;
+    const version = ++selectionVersion.current;
     setActionError(null);
-    setConfirmOpen(true);
+    setPreparing(true);
+    try {
+      const fresh = await adminListBookings(forLab, forDate);
+      if (version !== selectionVersion.current) return; // selection moved on: discard
+      setData(fresh);
+      if (fresh.closed || fresh.date < todayLocal()) {
+        setActionError("This lab can no longer be closed on that date.");
+        return;
+      }
+      const now = Date.now();
+      setCloseTarget({
+        labId: forLab,
+        labName: fresh.lab.name,
+        date: fresh.date,
+        affected: fresh.bookings.filter(
+          (b) => b.status === "active" && new Date(b.slot.start_time).getTime() > now,
+        ).length,
+      });
+    } catch (error) {
+      if (version !== selectionVersion.current) return;
+      setActionError(errorMessage(error));
+      if (error instanceof ApiError && error.code === "lab_not_found") void refreshLabs();
+    } finally {
+      if (version === selectionVersion.current) setPreparing(false);
+    }
   };
 
-  const closeLab = async () => {
-    if (labId === null || !data) return;
-    const { date: closeDate, lab } = data;
+  /** Closes the lab described by the snapshot. Reads nothing from live state except to compare. */
+  const closeLab = async (target: CloseSnapshot) => {
     setClosing(true);
     setActionError(null);
     let reload = false;
     let labMissing = false;
+    let failure: string | null = null;
     try {
-      const created: ClosureCreated = await adminCreateClosure(labId, closeDate);
+      const created: ClosureCreated = await adminCreateClosure(target.labId, target.date);
       setResult({
-        labName: lab.name,
+        labName: target.labName,
         date: created.date,
         cancelledCount: created.cancelled_booking_count,
       });
       reload = true;
     } catch (error) {
-      setActionError(errorMessage(error));
+      failure = errorMessage(error);
       // closure_exists, closure_date_in_past, lab_not_found: show the message and reload.
       reload = error instanceof ApiError && RELOAD_CODES.has(error.code);
       labMissing = error instanceof ApiError && error.code === "lab_not_found";
     }
     setClosing(false);
-    setConfirmOpen(false);
-    if (!reload) return;
+    setCloseTarget(null);
+
+    const sameSelection = () =>
+      labIdRef.current === target.labId && dateRef.current === target.date;
+    if (failure !== null) {
+      // If the pickers moved on during the request, say which lab and date the error is for.
+      setActionError(
+        sameSelection()
+          ? failure
+          : `Closing ${target.labName} on ${formatDate(target.date)} failed: ${failure}`,
+      );
+    }
+    if (!reload || !sameSelection()) return; // never paint the old lab or date over the pickers
     // If the lab is gone, refreshing the labs switches lab and the effect loads the new list.
-    const selected = labMissing ? await refreshLabs() : labId;
-    if (selected === labId) await fetchBookings(labId, closeDate, false);
+    const selected = labMissing ? await refreshLabs() : target.labId;
+    if (selected === target.labId && sameSelection()) {
+      await fetchBookings(target.labId, target.date, false);
+    }
   };
 
   const changeLab = (id: number) => {
+    selectionVersion.current++;
+    setCloseTarget(null);
+    setPreparing(false);
     setResult(null);
     setActionError(null);
     setLabId(id);
   };
 
   const changeDate = (value: string) => {
+    selectionVersion.current++;
+    setCloseTarget(null);
+    setPreparing(false);
     setResult(null);
     setActionError(null);
     setDate(value);
@@ -231,8 +305,8 @@ export function AdminPage() {
                   <button
                     type="button"
                     className="btn btn-danger"
-                    onClick={openConfirm}
-                    disabled={closing || loading}
+                    onClick={() => void openConfirm()}
+                    disabled={closing || loading || preparing}
                   >
                     Close lab for this date
                   </button>
@@ -250,13 +324,15 @@ export function AdminPage() {
           )}
 
           <CloseLabDialog
-            open={confirmOpen}
-            labName={data?.lab.name ?? selectedLab?.name ?? ""}
-            dateText={data ? formatDate(data.date) : ""}
-            affectedCount={confirmAffected}
+            open={closeTarget !== null}
+            labName={closeTarget?.labName ?? ""}
+            dateText={closeTarget ? formatDate(closeTarget.date) : ""}
+            affectedCount={closeTarget?.affected ?? 0}
             busy={closing}
-            onConfirm={() => void closeLab()}
-            onCancel={() => setConfirmOpen(false)}
+            onConfirm={() => {
+              if (closeTarget) void closeLab(closeTarget);
+            }}
+            onCancel={() => setCloseTarget(null)}
           />
         </>
       )}

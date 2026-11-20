@@ -6,7 +6,7 @@ interface CloseLabDialogProps {
   labName: string;
   /** Display date, for example "Thu, 19 Nov 2026". */
   dateText: string;
-  /** Active bookings on the date that haven't started, counted from the list on screen. */
+  /** Active bookings on the date that haven't started, counted from the day as refetched when the dialog opened. */
   affectedCount: number;
   busy: boolean;
   onConfirm: () => void;
