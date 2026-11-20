@@ -1,0 +1,5 @@
+student_number,password,is_admin
+20260001,student-pass-1,false
+20260002,student-pass-2,false
+20260003,student-pass-3,false
+90000001,admin-pass-1,true
