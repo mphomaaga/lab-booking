@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+*.db
+
+# Node
+node_modules/
+dist/
+
+# Secrets and local config
+.env
+
+# Claude Code
+.claude/worktrees/
+.claude/settings.local.json
+
+# Real accounts CSV holds passwords: never commit (spec section 6)
+backend/seed_data/*.csv
+!backend/seed_data/accounts.sample.csv
