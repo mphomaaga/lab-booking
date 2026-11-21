@@ -1,0 +1,19 @@
+# Keep local state, caches and the real accounts CSV out of the image (spec section 6).
+# Mirrors the root .gitignore.
+.venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+build/
+.pytest_cache/
+**/*.db
+.env
+.env.*
+.claude/
+.git/
+tests/
+
+# The real accounts CSV holds passwords and must never enter an image.
+# Only the committed sample is allowed in.
+seed_data/*.csv
+!seed_data/accounts.sample.csv
