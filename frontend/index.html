@@ -3,7 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>Lab booking</title>
+    <script>
+      // Runs before first paint so the page never flashes the wrong theme.
+      // Saved choice first, otherwise the device setting. Keep the key in sync with src/theme/theme.ts.
+      (function () {
+        var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var theme = dark ? "dark" : "light";
+        try {
+          var saved = localStorage.getItem("lab-booking-theme");
+          if (saved === "light" || saved === "dark") theme = saved;
+        } catch (e) {
+          /* storage blocked: keep the device setting */
+        }
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

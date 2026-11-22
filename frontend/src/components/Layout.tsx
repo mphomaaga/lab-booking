@@ -1,8 +1,10 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useTheme } from "../theme/theme";
 
 export function Layout() {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
 
   return (
     <div className="layout">
@@ -11,6 +13,14 @@ export function Layout() {
           <span className="app-name">Lab booking</span>
           <span className="layout-user">
             <span className="student-number">{user?.student_number}</span>
+            <button
+              type="button"
+              className="btn theme-toggle"
+              aria-pressed={theme === "dark"}
+              onClick={toggleTheme}
+            >
+              Dark mode
+            </button>
             <button type="button" className="btn" onClick={logout}>
               Log out
             </button>

@@ -16,16 +16,18 @@
   justify-content: space-between;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  border: 1px solid #d9e2ec;
-  border-left: 5px solid #1d4ed8;
+  border: 1px solid var(--border);
+  border-left: 5px solid var(--link);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
 }
 
+/* Cancelled: muted, dashed, struck-through lab and time, plus a "Cancelled" badge. */
 .booking-item-cancelled {
-  border-left-color: #9aa5b1;
-  background: #eef1f4;
-  color: #52606d;
+  border-style: dashed;
+  border-left-color: var(--border-control);
+  background: var(--surface-muted);
+  color: var(--text-muted);
 }
 
 .booking-item-cancelled .booking-lab,
@@ -56,19 +58,27 @@
 }
 
 .badge-active {
-  background: #dbeafe;
-  color: #1e3a8a;
+  background: var(--teal-bg);
+  color: var(--teal-text);
 }
 
 .badge-cancelled {
-  background: #d9dee3;
-  color: #323f4b;
+  border: 1px dashed var(--text-muted);
+  background: var(--surface-muted);
+  color: var(--text-muted);
 }
 
+/* Cancel a booking: outlined danger button with a warning icon (see .btn-danger). */
 .booking-cancel {
   flex: 0 0 auto;
-  border-color: #b91c1c;
-  color: #b91c1c;
+  border: 2px solid var(--danger-fg);
+  color: var(--danger-fg);
+  font-weight: 700;
+}
+
+.booking-cancel:disabled {
+  border: 2px dashed var(--border-control);
+  color: var(--text-muted);
 }
 
 .dialog-booking {
@@ -77,9 +87,9 @@
 
 .empty-state {
   padding: 1.5rem 1rem;
-  border: 1px dashed #9aa5b1;
+  border: 1px dashed var(--border-control);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
   text-align: center;
 }
 
@@ -92,7 +102,8 @@
   align-items: center;
   justify-content: center;
   text-decoration: none;
-  background: #1d4ed8;
-  border-color: #1d4ed8;
-  color: #fff;
+  border-color: var(--primary-border);
+  background: var(--primary-bg);
+  color: var(--primary-text);
+  font-weight: 600;
 }

@@ -1,5 +1,97 @@
 /* Mobile first: every screen must work at 360 px wide with no horizontal scrolling. */
 
+/*
+ * Colour tokens. Every colour in the app is defined here, once, and components only use var(--...).
+ *
+ * Brand colours (fixed, same in both modes):
+ *   raspberry #ac155c, yellow #f3ce27, teal #6cc2bf, charcoal #3f3f3f
+ *
+ * Where each brand colour may go (WCAG AA, checked with a contrast script, see the PR for #52):
+ *   light mode: charcoal text; raspberry for links and primary buttons (white text);
+ *               yellow and teal only as fills behind charcoal text. Never as text on white.
+ *   dark mode:  charcoal-based backgrounds; yellow for links, teal for focus rings;
+ *               raspberry only as a button fill with white text. Never as text on charcoal.
+ *
+ * The error/danger red is a status colour, not a brand colour: the brand palette has no red,
+ * and raspberry is already the primary action colour, so danger needs its own.
+ *
+ * The mode is the data-theme attribute on <html>, set before first paint by the script in
+ * index.html and afterwards by src/theme/theme.ts.
+ */
+:root {
+  --brand-raspberry: #ac155c;
+  --brand-yellow: #f3ce27;
+  --brand-teal: #6cc2bf;
+  --brand-charcoal: #3f3f3f;
+
+  color-scheme: light;
+
+  /* Surfaces and text */
+  --bg: #f4f4f4;
+  --surface: #ffffff;
+  --surface-muted: #ebebeb;
+  --text: var(--brand-charcoal);
+  --text-muted: #595959;
+  --border: #d0d0d0;
+  --border-control: #767676;
+  --input-bg: #ffffff;
+  --overlay: rgba(0, 0, 0, 0.5);
+
+  /* Links and focus */
+  --link: var(--brand-raspberry);
+  --focus: var(--brand-raspberry);
+
+  /* Primary button */
+  --primary-bg: var(--brand-raspberry);
+  --primary-border: var(--brand-raspberry);
+  --primary-hover-bg: #8f1049;
+  --primary-text: #ffffff;
+
+  /* Yellow and teal: fills behind dark text */
+  --accent-bg: var(--brand-yellow);
+  --accent-text: var(--brand-charcoal);
+  --teal-bg: var(--brand-teal);
+  --teal-text: var(--brand-charcoal);
+
+  /* Errors and danger */
+  --error-bg: #fdeceb;
+  --error-text: #7a1612;
+  --error-border: #b42318;
+  --danger-bg: #b42318;
+  --danger-text: #ffffff;
+  --danger-fg: #b42318;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #2b2b2b;
+  --surface: var(--brand-charcoal);
+  --surface-muted: #343434;
+  --text: #f5f5f5;
+  --text-muted: #cfcfcf;
+  --border: #5c5c5c;
+  --border-control: #a3a3a3;
+  --input-bg: #2b2b2b;
+  --overlay: rgba(0, 0, 0, 0.65);
+
+  --link: var(--brand-yellow);
+  --focus: var(--brand-teal);
+
+  /* Raspberry is only 1.5-2:1 against charcoal, so the button gets a light edge. */
+  --primary-bg: var(--brand-raspberry);
+  --primary-border: #f5f5f5;
+  --primary-hover-bg: #c4186a;
+  --primary-text: #ffffff;
+
+  --error-bg: #4d1f1c;
+  --error-text: #ffe0dc;
+  --error-border: #ff8a80;
+  --danger-bg: #b42318;
+  --danger-text: #ffffff;
+  --danger-fg: #ffb4ab;
+}
+
 *,
 *::before,
 *::after {
@@ -15,8 +107,8 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 1rem;
   line-height: 1.5;
-  color: #1f2933;
-  background: #f5f7fa;
+  color: var(--text);
+  background: var(--bg);
   overflow-x: hidden;
 }
 
@@ -49,28 +141,56 @@ select {
   min-height: 44px;
   min-width: 44px;
   padding: 0.5rem 1rem;
-  border: 1px solid #9aa5b1;
+  border: 1px solid var(--border-control);
   border-radius: 6px;
-  background: #fff;
-  color: #1f2933;
+  background: var(--surface);
+  color: var(--text);
   cursor: pointer;
 }
 
+/* Disabled (and "Full" / "Started") buttons: flat, muted and dashed, not just faded. */
 .btn:disabled {
-  opacity: 0.6;
+  border-style: dashed;
+  background: var(--surface-muted);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
 .btn-primary {
-  background: #1d4ed8;
-  border-color: #1d4ed8;
-  color: #fff;
+  border-color: var(--primary-border);
+  background: var(--primary-bg);
+  color: var(--primary-text);
+  font-weight: 600;
 }
 
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover-bg);
+}
+
+.btn-primary:disabled {
+  border-color: var(--border-control);
+}
+
+/*
+ * Danger differs from primary by more than colour: a different (red) fill, a double border,
+ * a warning icon and bolder text.
+ */
 .btn-danger {
-  background: #b91c1c;
-  border-color: #b91c1c;
-  color: #fff;
+  border: 3px double var(--danger-text);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-weight: 700;
+}
+
+.btn-danger:disabled {
+  border: 3px double var(--border-control);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+.btn-danger::before,
+.booking-cancel::before {
+  content: "\26A0\FE0E\00A0";
 }
 
 input,
@@ -78,14 +198,14 @@ select {
   min-height: 44px;
   max-width: 100%;
   padding: 0.5rem 0.75rem;
-  border: 1px solid #9aa5b1;
+  border: 1px solid var(--border-control);
   border-radius: 6px;
-  background: #fff;
-  color: inherit;
+  background: var(--input-bg);
+  color: var(--text);
 }
 
 :focus-visible {
-  outline: 3px solid #93c5fd;
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -96,8 +216,8 @@ select {
 }
 
 .layout-header {
-  background: #fff;
-  border-bottom: 1px solid #d9e2ec;
+  background: var(--surface);
+  border-bottom: 4px solid var(--brand-yellow);
 }
 
 .layout-top {
@@ -116,8 +236,9 @@ select {
 
 .layout-user {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem 0.75rem;
   min-width: 0;
 }
 
@@ -126,6 +247,19 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 9rem;
+}
+
+/* The theme toggle shows its state with a filled marker as well as aria-pressed. */
+.theme-toggle[aria-pressed="true"] {
+  font-weight: 700;
+}
+
+.theme-toggle::before {
+  content: "\25CB\00A0";
+}
+
+.theme-toggle[aria-pressed="true"]::before {
+  content: "\25CF\00A0";
 }
 
 .layout-nav {
@@ -140,14 +274,24 @@ select {
   align-items: center;
   min-height: 44px;
   padding: 0 0.9rem;
+  border: 2px solid transparent;
   border-radius: 6px;
-  color: #1d4ed8;
+  color: var(--link);
   text-decoration: none;
 }
 
+.nav-link:hover {
+  text-decoration: underline;
+}
+
+/* The current page: yellow fill behind dark text with a dark border, bold and underlined (not colour alone). */
 .nav-link.active {
-  background: #dbeafe;
-  font-weight: 600;
+  border-color: var(--accent-text);
+  background: var(--accent-bg);
+  color: var(--accent-text);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
 }
 
 .layout-main {
@@ -160,17 +304,24 @@ select {
 
 .loading {
   padding: 1rem;
-  color: #52606d;
+  color: var(--text-muted);
 }
 
+/* Errors: red-tinted box, thick left bar and an "Error:" prefix, so it is not colour alone. */
 .error-message {
   margin: 0 0 1rem;
   padding: 0.75rem 1rem;
-  border: 1px solid #f5a3a3;
+  border: 1px solid var(--error-border);
+  border-left-width: 6px;
   border-radius: 6px;
-  background: #fdecec;
-  color: #8a1c1c;
+  background: var(--error-bg);
+  color: var(--error-text);
   overflow-wrap: anywhere;
+}
+
+.error-message::before {
+  content: "Error: ";
+  font-weight: 700;
 }
 
 .dialog-backdrop {
@@ -181,7 +332,7 @@ select {
   align-items: center;
   justify-content: center;
   padding: 1rem;
-  background: rgba(15, 23, 42, 0.5);
+  background: var(--overlay);
 }
 
 .dialog {
@@ -190,8 +341,10 @@ select {
   max-height: 100%;
   overflow-y: auto;
   padding: 1.25rem;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
+  color: var(--text);
 }
 
 .dialog-body {
