@@ -148,9 +148,9 @@ export function BookPage() {
         {day === null ? (
           !loadError && <LoadingMessage text="Loading slots..." />
         ) : day.day_status === "weekend" ? (
-          <p className="book-info">Labs are closed at weekends. Pick a weekday.</p>
+          <p className="book-info book-info-closed">Labs are closed at weekends. Pick a weekday.</p>
         ) : day.day_status === "closed" ? (
-          <p className="book-info">{day.lab.name} is closed on this date. Pick another date or lab.</p>
+          <p className="book-info book-info-closed">{day.lab.name} is closed on this date. Pick another date or lab.</p>
         ) : (
           <SlotList slots={day.slots} submittingSlotId={submittingSlotId} onBook={(slot) => void book(slot)} />
         )}

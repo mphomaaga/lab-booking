@@ -12,14 +12,14 @@
   width: 100%;
   max-width: 24rem;
   padding: 1.25rem;
-  border: 1px solid #d9e2ec;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .login-app-name {
   margin: 0 0 0.25rem;
-  color: #52606d;
+  color: var(--text-muted);
   font-weight: 700;
 }
 
