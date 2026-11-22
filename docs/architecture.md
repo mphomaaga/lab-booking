@@ -130,7 +130,7 @@ Root `.env` (git-ignored; copy from `.env.example`) is read by docker compose. F
 | `ACCOUNTS_CSV_PATH` | seed | `seed_data/accounts.sample.csv` | Relative to `backend/`. Point at the real Campus Operations CSV, which is never committed |
 | `CORS_ORIGINS` | backend | `http://localhost:5173` | Comma-separated list of allowed frontend origins |
 | `VITE_API_BASE_URL` | frontend (build time) | `http://localhost:8000` | Backend base URL |
-| `VITE_USE_MOCK_API` | frontend (build time) | `true` in `frontend/.env.development` until the switch-over issue, then `false` | `true` starts MSW and serves the mock API in the browser |
+| `VITE_USE_MOCK_API` | frontend (build time) | `false` in `frontend/.env.development` | `true` starts MSW and serves the mock API in the browser, so `npm run dev` works with no backend |
 
 The time zone `Africa/Johannesburg` is a constant in code (`backend/app/core/clock.py`, `frontend/src/lib/time.ts`), not configuration (rule 5.16).
 
@@ -148,7 +148,7 @@ uvicorn app.main:app --reload            # http://localhost:8000, docs at /docs
 pytest                                   # all backend tests, including tests/db/
 ```
 
-Local frontend (from `frontend/`):
+Local frontend (from `frontend/`). `frontend/.env.development` sets `VITE_USE_MOCK_API=false`, so the backend must already be running on port 8000 (the local backend above, or the Docker recipe below). Open the app at `http://localhost:5173`, not `127.0.0.1`: the default `CORS_ORIGINS` allows only `localhost`. To run with no backend, set `VITE_USE_MOCK_API=true` to use the MSW mock.
 
 ```bash
 npm ci
